@@ -1,68 +1,218 @@
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+# Testing-Hooks
 
-## Available Scripts
+This repo lays down different strategies to test React custom hooks and components that use hooks.
 
-In the project directory, you can run:
+## Test Strategies
 
-### `npm start`
+There are broadly two strategies to test our React codebase.
 
-Runs the app in the development mode.<br>
-Open [http://localhost:3000](http://localhost:3000) to view it in the browser.
+1. Testing user observable behaviour
+2. Testing implementation details
 
-The page will reload if you make edits.<br>
-You will also see any lint errors in the console.
+### Testing user observable behaviour
 
-### `npm test`
+Testing user observable behaviour means writing tests against components that test
 
-Launches the test runner in the interactive watch mode.<br>
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+- how the component is rendered
+- how the component is re-rendered when user interacts with the DOM
+- how props/state control what is rendered
 
-### `npm run build`
+Consider the following component - `Greet`
 
-Builds the app for production to the `build` folder.<br>
-It correctly bundles React in production mode and optimizes the build for the best performance.
+```jsx
+function Greet({ user = 'User' }) {
+  const [name, setName] = React.useState(user);
 
-The build is minified and the filenames include the hashes.<br>
-Your app is ready to be deployed!
+  return <div onClick={() => setName('Pinocchio')}>Hello, {name}!</div>;
+}
+```
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+Testing the user observable behaviour in `Greet` would mean
 
-### `npm run eject`
+- test if `Greet` is rendered without crashing
+- test if `Hello, User!` is rendered when user prop is not passed
+- test if `Hello, Bruce!` is rendered when `Bruce` is passed as value to `user` prop
+- test if the text changes to `Hello, Pinocchio!` when the user clicks on the element
 
-**Note: this is a one-way operation. Once you `eject`, you can’t go back!**
+### Testing implementation details
 
-If you aren’t satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+Testing implementation details means writing tests against state logic that test
 
-Instead, it will copy all the configuration files and the transitive dependencies (Webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you’re on your own.
+- how the state is initialized with default/prop values
+- how the state changes when handlers are invoked
 
-You don’t have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn’t feel obligated to use this feature. However we understand that this tool wouldn’t be useful if you couldn’t customize it when you are ready for it.
+Consider the same component - `Greet`
 
-## Learn More
+```jsx
+function Greet({ user = 'User' }) {
+  const [name, setName] = React.useState(user);
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+  return <div onClick={() => setName('Pinocchio')}>Hello, {name}!</div>;
+}
+```
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+Testing implementation details in `Greet` would mean
 
-### Code Splitting
+- test if `name` is set to default value `User` when user prop is not passed to `Greet`
+- test if `name` is set to prop value when user prop is passed to `Greet`
+- test if `name` is updated when `setName` is invoked
 
-This section has moved here: https://facebook.github.io/create-react-app/docs/code-splitting
+## Test custom hooks with Enzyme
 
-### Analyzing the Bundle Size
+_Note: Please make sure your React version is `^16.8.5`. Hooks won't re-render components with enzyme shallow render in previous versions and the React team fixed it in this release. If your React version is below that, you might have to use enzyme mount and `.update()` your wrapper after each change to test the re-render._
 
-This section has moved here: https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size
+Testing implementation details might seem unnecessary and might even be considered as a bad practice when you are writing tests against components that contains presentational (UI) logic and render elements to the DOM. But **custom hooks** contain only **state logic** and it is imperative that we test the implementation details thoroughly so we know exactly how our custom hook will behave within a component.
 
-### Making a Progressive Web App
+Let's write a custom hook to update and validate a form field.
 
-This section has moved here: https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app
+```js
+/* useFormField.js */
 
-### Advanced Configuration
+import React from 'react';
 
-This section has moved here: https://facebook.github.io/create-react-app/docs/advanced-configuration
+function useFormField(initialVal = '') {
+  const [val, setVal] = React.useState(initialVal);
+  const [isValid, setValid] = React.useState(true);
 
-### Deployment
+  function onChange(e) {
+    setVal(e.target.value);
 
-This section has moved here: https://facebook.github.io/create-react-app/docs/deployment
+    if (!e.target.value) {
+      setValid(false);
+    } else if (!isValid) setValid(true);
+  }
 
-### `npm run build` fails to minify
+  return [val, onChange, isValid];
+}
 
-This section has moved here: https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify
+export default useFormField;
+```
+
+**As great as custom hooks are in abstracting away re-usable logic in our code, they do have one limitation. Even though they are just JavaScript functions they will work only inside React components. You cannot just invoke them and write tests against what a hook returns. You have to wrap them inside a React component and test the values that it returns.**
+
+- custom hooks cannot be tested like JavaScript functions
+- custom hooks should be wrapped inside a React component to test its behaviour
+
+Thanks to the composibility of hooks, we could pass a hook as a prop to a component and everything will work exactly as how it's supposed to work. We can write a wrapper component to render and test our hook.
+
+```jsx
+/* useFormField.test.js */
+
+function HookWrapper(props) {
+  const hook = props.hook ? props.hook() : undefined;
+  return <div hook={hook} />;
+}
+```
+
+Now we can access the hook like a JavaScript object and test its behaviour.
+
+```jsx
+/* useFormField.test.js */
+
+import React from 'react';
+import { shallow } from 'enzyme';
+import useFormField from './useFormField';
+
+function HookWrapper(props) {
+  const hook = props.hook ? props.hook() : undefined;
+  return <div hook={hook} />;
+}
+
+it('should set init value', () => {
+  let wrapper = shallow(<HookWrapper hook={() => useFormField('')} />);
+
+  let { hook } = wrapper.find('div').props();
+  let [val, onChange, isValid] = hook;
+  expect(val).toEqual('');
+
+  wrapper = shallow(<HookWrapper hook={() => useFormField('marco')} />);
+
+  // destructuring objects - {} should be inside brackets - () to avoid syntax error
+  ({ hook } = wrapper.find('div').props());
+  [val, onChange, isValid] = hook;
+  expect(val).toEqual('marco');
+});
+```
+
+The full test suite for `useFormField` custom hook will look like this.
+
+```jsx
+/* useFormField.test.js */
+
+import React from 'react';
+import { shallow } from 'enzyme';
+import useFormField from './useFormField';
+
+function HookWrapper(props) {
+  const hook = props.hook ? props.hook() : undefined;
+  return <div hook={hook} />;
+}
+
+describe('useFormField', () => {
+  it('should render', () => {
+    let wrapper = shallow(<HookWrapper />);
+
+    expect(wrapper.exists()).toBeTruthy();
+  });
+
+  it('should set init value', () => {
+    let wrapper = shallow(<HookWrapper hook={() => useFormField('')} />);
+
+    let { hook } = wrapper.find('div').props();
+    let [val, onChange, isValid] = hook;
+    expect(val).toEqual('');
+
+    wrapper = shallow(<HookWrapper hook={() => useFormField('marco')} />);
+
+    // destructuring objects - {} should be inside brackets - () to avoid syntax error
+    ({ hook } = wrapper.find('div').props());
+    [val, onChange, isValid] = hook;
+    expect(val).toEqual('marco');
+  });
+
+  it('should set the right val value', () => {
+    let wrapper = shallow(<HookWrapper hook={() => useFormField('marco')} />);
+
+    let { hook } = wrapper.find('div').props();
+    let [val, onChange, isValid] = hook;
+    expect(val).toEqual('marco');
+
+    onChange({ target: { value: 'polo' } });
+
+    ({ hook } = wrapper.find('div').props());
+    [val, onChange, isValid] = hook;
+    expect(val).toEqual('polo');
+  });
+
+  it('should set the right isValid value', () => {
+    let wrapper = shallow(<HookWrapper hook={() => useFormField('marco')} />);
+
+    let { hook } = wrapper.find('div').props();
+    let [val, onChange, isValid] = hook;
+    expect(val).toEqual('marco');
+    expect(isValid).toEqual(true);
+
+    onChange({ target: { value: 'polo' } });
+
+    ({ hook } = wrapper.find('div').props());
+    [val, onChange, isValid] = hook;
+    expect(val).toEqual('polo');
+    expect(isValid).toEqual(true);
+
+    onChange({ target: { value: '' } });
+
+    ({ hook } = wrapper.find('div').props());
+    [val, onChange, isValid] = hook;
+    expect(val).toEqual('');
+    expect(isValid).toEqual(false);
+  });
+});
+```
+
+Rendering the custom hook and accessing it as a prop should give us full access to its return values.
+
+Happy testing!
+
+## License
+
+MIT © Dinesh Pandiyan
